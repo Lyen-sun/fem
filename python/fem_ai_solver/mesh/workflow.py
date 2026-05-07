@@ -435,6 +435,68 @@ def _interior_points(outer: list[Point2D], holes: list[list[Point2D]], step: flo
     return points
 
 
+def _dedupe_preserve_order(values: list[int]) -> list[int]:
+    seen: set[int] = set()
+    result: list[int] = []
+    for value in values:
+        item = int(value)
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def _axis_aligned_rectangle_bounds(region: MeshRegion) -> tuple[float, float, float, float] | None:
+    if region.hole_points:
+        return None
+    points = _normalize_polygon(region.points)
+    if len(points) != 4:
+        return None
+    for idx, p0 in enumerate(points):
+        p1 = points[(idx + 1) % len(points)]
+        if abs(p0[0] - p1[0]) > 1e-10 and abs(p0[1] - p1[1]) > 1e-10:
+            return None
+    xs = sorted({_canonical_coord(point)[0] for point in points})
+    ys = sorted({_canonical_coord(point)[1] for point in points})
+    if len(xs) != 2 or len(ys) != 2:
+        return None
+    xmin, xmax = xs
+    ymin, ymax = ys
+    if xmax <= xmin or ymax <= ymin:
+        return None
+    expected = {
+        _canonical_coord((xmin, ymin)),
+        _canonical_coord((xmax, ymin)),
+        _canonical_coord((xmax, ymax)),
+        _canonical_coord((xmin, ymax)),
+    }
+    if {_canonical_coord(point) for point in points} != expected:
+        return None
+    return float(xmin), float(xmax), float(ymin), float(ymax)
+
+
+def _axis_values(start: float, end: float, size: float, extra_values: list[float]) -> list[float]:
+    span = float(end) - float(start)
+    if span <= 0.0:
+        return [float(start), float(end)]
+    pieces = max(1, int(ceil(span / max(float(size), 1e-9))))
+    values = [float(start) + span * idx / pieces for idx in range(pieces + 1)]
+    tol = max(abs(span) * 1e-10, 1e-10)
+    for value in extra_values:
+        candidate = min(max(float(value), float(start)), float(end))
+        if any(abs(candidate - existing) <= tol for existing in values):
+            continue
+        values.append(candidate)
+    values.sort()
+    deduped: list[float] = []
+    for value in values:
+        if deduped and abs(value - deduped[-1]) <= tol:
+            continue
+        deduped.append(float(value))
+    return deduped
+
+
 class BuiltinT3Mesher:
     name: MeshBackendName = "builtin"
 
@@ -480,15 +542,20 @@ class BuiltinT3Mesher:
         control_map = _control_by_region(request.controls)
         for region in target_regions:
             control = control_map.get(region.id) or control_map.get(None)
-            if control is not None and control.algorithm == "structured":
+            if (
+                control is not None
+                and control.algorithm == "structured"
+                and _axis_aligned_rectangle_bounds(region) is None
+            ):
                 warnings.append(
-                    f"{region.name}: builtin backend currently uses geometry-preserving free T3 meshing for this region."
+                    f"{region.name}: builtin structured T3 requires a 4-corner axis-aligned rectangle without holes; using free T3."
                 )
         mesh, region_to_element_ids, edge_to_node_ids, point_to_node_ids = self._generate_regions(
             target_regions,
             request.seed,
             base_mesh,
             request.geometry_points,
+            request.controls,
         )
         timings["generate"] = (perf_counter() - t0) * 1000.0
         quality = evaluate_t3_mesh_quality(mesh)
@@ -538,8 +605,10 @@ class BuiltinT3Mesher:
         seed: MeshSeed,
         base_mesh: Mesh,
         geometry_points: dict[str, MeshGeometryPoint] | None = None,
+        controls: list[MeshControl] | None = None,
     ) -> tuple[Mesh, dict[str, list[int]], dict[str, list[int]], dict[str, list[int]]]:
         geometry_points = geometry_points or {}
+        control_map = _control_by_region(controls or [])
         nodes: list[Node] = [Node(id=int(node.id), x=float(node.x), y=float(node.y)) for node in base_mesh.nodes]
         elements: list[Element] = [
             Element(id=int(element.id), type=element.type, connectivity=list(element.connectivity), material_id=int(element.material_id))
@@ -564,7 +633,129 @@ class BuiltinT3Mesher:
             nodes.append(Node(id=node_id, x=key[0], y=key[1]))
             return node_id
 
+        def append_element(connectivity: list[int], material_id: int) -> int:
+            nonlocal next_element_id
+            element_id = next_element_id
+            elements.append(
+                Element(
+                    id=element_id,
+                    type="T3",
+                    connectivity=connectivity,
+                    material_id=max(int(material_id), 1),
+                )
+            )
+            next_element_id += 1
+            return element_id
+
+        def nearest_index(values: list[float], value: float, tol: float) -> int | None:
+            if not values:
+                return None
+            index = min(range(len(values)), key=lambda idx: abs(values[idx] - float(value)))
+            return index if abs(values[index] - float(value)) <= tol else None
+
+        def structured_rectangle_region(
+            region: MeshRegion,
+            bounds: tuple[float, float, float, float],
+        ) -> tuple[list[int], dict[str, list[int]], dict[str, list[int]]]:
+            xmin, xmax, ymin, ymax = bounds
+            polygon = _normalize_polygon(region.points)
+            extra_points = _extra_geometry_points_for_region(region, geometry_points)
+            x_size = _region_step(region, seed)
+            y_size = _region_step(region, seed)
+            for idx, p0 in enumerate(polygon):
+                p1 = polygon[(idx + 1) % len(polygon)]
+                edge_id = region.edge_ids[idx] if idx < len(region.edge_ids) else None
+                edge_size = _edge_size(region, seed, edge_id)
+                if abs(p0[1] - p1[1]) <= 1e-10:
+                    x_size = min(x_size, edge_size)
+                elif abs(p0[0] - p1[0]) <= 1e-10:
+                    y_size = min(y_size, edge_size)
+
+            xs = _axis_values(xmin, xmax, x_size, [xy[0] for xy in extra_points.values()])
+            ys = _axis_values(ymin, ymax, y_size, [xy[1] for xy in extra_points.values()])
+            grid_node_ids = [
+                [ensure_node(x, y) for x in xs]
+                for y in ys
+            ]
+            new_element_ids: list[int] = []
+            for iy in range(len(ys) - 1):
+                for ix in range(len(xs) - 1):
+                    n00 = grid_node_ids[iy][ix]
+                    n10 = grid_node_ids[iy][ix + 1]
+                    n11 = grid_node_ids[iy + 1][ix + 1]
+                    n01 = grid_node_ids[iy + 1][ix]
+                    new_element_ids.append(append_element([n00, n10, n11], region.material_id))
+                    new_element_ids.append(append_element([n00, n11, n01], region.material_id))
+
+            tol = max(max(xmax - xmin, ymax - ymin) * 1e-8, 1e-8)
+
+            def node_at(x: float, y: float) -> int | None:
+                ix = nearest_index(xs, x, tol)
+                iy = nearest_index(ys, y, tol)
+                if ix is None or iy is None:
+                    return None
+                return int(grid_node_ids[iy][ix])
+
+            def edge_nodes(p0: Point2D, p1: Point2D) -> list[int]:
+                if abs(p0[1] - p1[1]) <= tol:
+                    iy = nearest_index(ys, p0[1], tol)
+                    if iy is None:
+                        return []
+                    x_min = min(p0[0], p1[0]) - tol
+                    x_max = max(p0[0], p1[0]) + tol
+                    indices = [idx for idx, x in enumerate(xs) if x_min <= x <= x_max]
+                    if p1[0] < p0[0]:
+                        indices.reverse()
+                    return [int(grid_node_ids[iy][idx]) for idx in indices]
+                if abs(p0[0] - p1[0]) <= tol:
+                    ix = nearest_index(xs, p0[0], tol)
+                    if ix is None:
+                        return []
+                    y_min = min(p0[1], p1[1]) - tol
+                    y_max = max(p0[1], p1[1]) + tol
+                    indices = [idx for idx, y in enumerate(ys) if y_min <= y <= y_max]
+                    if p1[1] < p0[1]:
+                        indices.reverse()
+                    return [int(grid_node_ids[idx][ix]) for idx in indices]
+                return []
+
+            edge_nodes_by_id: dict[str, list[int]] = {}
+            for idx, p0 in enumerate(polygon):
+                edge_id = region.edge_ids[idx] if idx < len(region.edge_ids) else None
+                if edge_id is None:
+                    continue
+                p1 = polygon[(idx + 1) % len(polygon)]
+                sequence = _dedupe_preserve_order(edge_nodes(p0, p1))
+                if sequence:
+                    edge_nodes_by_id[str(edge_id)] = sequence
+
+            point_nodes_by_id: dict[str, list[int]] = {}
+            for idx, point in enumerate(polygon):
+                node_id = node_at(point[0], point[1])
+                if node_id is None:
+                    continue
+                point_nodes_by_id[f"{region.id}:point:{idx}"] = [node_id]
+                if idx < len(region.point_ids):
+                    point_nodes_by_id[str(region.point_ids[idx])] = [node_id]
+            for point_id, xy in extra_points.items():
+                node_id = node_at(xy[0], xy[1])
+                if node_id is not None:
+                    point_nodes_by_id[str(point_id)] = [node_id]
+
+            return new_element_ids, edge_nodes_by_id, point_nodes_by_id
+
         for region in regions:
+            control = control_map.get(region.id) or control_map.get(None)
+            rect_bounds = _axis_aligned_rectangle_bounds(region)
+            if control is not None and control.algorithm == "structured" and rect_bounds is not None:
+                new_element_ids, structured_edges, structured_points = structured_rectangle_region(region, rect_bounds)
+                region_to_element_ids[region.id] = new_element_ids
+                for edge_id, node_ids in structured_edges.items():
+                    edge_to_node_ids[edge_id] = node_ids
+                for point_id, node_ids in structured_points.items():
+                    point_to_node_ids[point_id] = node_ids
+                continue
+
             outer, source_edges = _densify_loop(region.points, region.edge_ids, region, seed)
             if len(outer) < 3:
                 continue
@@ -650,7 +841,7 @@ class BuiltinT3Mesher:
                 if node_id is not None:
                     point_to_node_ids[str(point_id)] = [int(node_id)]
             for edge_id, node_ids in list(edge_to_node_ids.items()):
-                edge_to_node_ids[edge_id] = sorted(set(node_ids))
+                edge_to_node_ids[edge_id] = _dedupe_preserve_order(node_ids)
 
         return (
             Mesh(nodes=sorted(nodes, key=lambda item: item.id), elements=sorted(elements, key=lambda item: item.id)),

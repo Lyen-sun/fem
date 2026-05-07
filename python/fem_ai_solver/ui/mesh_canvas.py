@@ -1004,6 +1004,7 @@ class MeshCanvas(QWidget):
         path = QPainterPath()
         if self._model is not None:
             step = max(int(downsample), 1)
+            drawn_edges: set[tuple[int, int]] = set()
             for idx, element in enumerate(self._model.mesh.elements):
                 if step > 1 and idx % step != 0:
                     continue
@@ -1012,13 +1013,21 @@ class MeshCanvas(QWidget):
                 node_ids = element.connectivity
                 if len(node_ids) != 3 or any(node_id not in node_positions for node_id in node_ids):
                     continue
-                p0 = transform.map(*node_positions[node_ids[0]])
-                p1 = transform.map(*node_positions[node_ids[1]])
-                p2 = transform.map(*node_positions[node_ids[2]])
-                path.moveTo(p0)
-                path.lineTo(p1)
-                path.lineTo(p2)
-                path.lineTo(p0)
+                for start_id, end_id in (
+                    (int(node_ids[0]), int(node_ids[1])),
+                    (int(node_ids[1]), int(node_ids[2])),
+                    (int(node_ids[2]), int(node_ids[0])),
+                ):
+                    if start_id == end_id:
+                        continue
+                    edge_key = (start_id, end_id) if start_id < end_id else (end_id, start_id)
+                    if edge_key in drawn_edges:
+                        continue
+                    drawn_edges.add(edge_key)
+                    start = transform.map(*node_positions[start_id])
+                    end = transform.map(*node_positions[end_id])
+                    path.moveTo(start)
+                    path.lineTo(end)
         self._mesh_path_cache[key] = path
         return path
 
@@ -1075,7 +1084,9 @@ class MeshCanvas(QWidget):
         if self._model is None:
             return
 
-        painter.setPen(QPen(line_color, line_width))
+        pen = QPen(line_color, line_width)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
         total_elements = len(self._model.mesh.elements)
         downsample = 1
         if self._render_interaction_active() and total_elements > 20_000:

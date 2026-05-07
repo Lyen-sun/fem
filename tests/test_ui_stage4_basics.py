@@ -1325,6 +1325,57 @@ def test_mainwindow_load_manager_delete_removes_geometry_load_expansion() -> Non
         window.close()
 
 
+def test_mainwindow_bc_point_pick_does_not_retarget_existing_point_load() -> None:
+    _get_app()
+    window = MainWindow(show_startup_dialog=False, language="en_US")
+    try:
+        window._create_rect_model_from_form()
+        window._part_sketch_points = [(0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (0.0, 1.0), (0.0, 0.0)]
+        window._refresh_part_sketch_table()
+
+        mode_idx = window._load_bc_target_mode_combo.findData("geometry")
+        assert mode_idx >= 0
+        window._load_bc_target_mode_combo.setCurrentIndex(mode_idx)
+
+        point_a = window._resolve_or_create_geometry_point_at(0.0, 0.0)
+        assert point_a is not None
+        set_a = window._upsert_geometry_set_from_geometry_ids(
+            entity_type="point",
+            geometry_ids=[point_a],
+            preferred_name="Load Point A",
+        )
+        assert set_a is not None
+        idx = window._load_bc_target_set_combo.findData(set_a)
+        assert idx >= 0
+        window._load_bc_target_set_combo.setCurrentIndex(idx)
+
+        window._load_point_vec_x.setValue(1.0)
+        window._load_point_vec_y.setValue(0.0)
+        window._load_point_magnitude_spin.setValue(9.0)
+        window._add_concentrated_load()
+
+        load_def = next(iter(window._scene_project.load_definitions.values()))
+        assert load_def.target_set_id == set_a
+        assert window._scene_project.geometry_sets[set_a].entity_ids == [point_a]
+
+        window._start_pick_bc_point()
+        assert window._pending_pick_context == "geometry_point_target"
+        window._on_canvas_sketch_face_picked(2.0, 0.0)
+        set_b = window._current_load_bc_target_set_id()
+        assert set_b is not None
+        assert set_b != set_a
+
+        window._apply_bc_fixed_preset()
+
+        load_def_after = next(iter(window._scene_project.load_definitions.values()))
+        bc_def = next(iter(window._scene_project.boundary_definitions.values()))
+        assert load_def_after.target_set_id == set_a
+        assert window._scene_project.geometry_sets[set_a].entity_ids == [point_a]
+        assert bc_def.target_set_id == set_b
+    finally:
+        window.close()
+
+
 def test_mainwindow_pick_distributed_edge_enters_geometry_edge_context() -> None:
     _get_app()
     window = MainWindow(show_startup_dialog=False, language="en_US")

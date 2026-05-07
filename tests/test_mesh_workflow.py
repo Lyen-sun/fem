@@ -8,10 +8,11 @@ import pytest
 
 from PySide6.QtWidgets import QApplication
 
-from fem_ai_solver.fem.model import Element, Mesh, Node
+from fem_ai_solver.fem.model import Element, Material, Mesh, Model, Node
 from fem_ai_solver.mesh.workflow import (
     BuiltinT3Mesher,
     GmshMesher,
+    MeshControl,
     MeshGeometryEdge,
     MeshGeometryPoint,
     MeshGenerationRequest,
@@ -22,6 +23,7 @@ from fem_ai_solver.mesh.workflow import (
 )
 from fem_ai_solver.preprocessing.scene_model import GeometrySetDef, LoadDefinition
 from fem_ai_solver.ui.main_window import MainWindow
+from fem_ai_solver.ui.mesh_canvas import MeshCanvas
 
 
 def _get_app() -> QApplication:
@@ -80,6 +82,37 @@ def test_builtin_mesher_edge_seed_adds_boundary_nodes() -> None:
     assert len(result.edge_to_node_ids["edge:bottom"]) >= 5
 
 
+def test_builtin_mesher_structured_rectangle_is_regular_and_preserves_edges() -> None:
+    mesher = BuiltinT3Mesher()
+    region = MeshRegion(
+        id="region:a",
+        name="A",
+        points=[(0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (0.0, 1.0)],
+        point_ids=["p0", "p1", "p2", "p3"],
+        edge_ids=["e0", "e1", "e2", "e3"],
+        material_id=1,
+    )
+
+    result = mesher.generate(
+        MeshGenerationRequest(
+            regions=[region],
+            seed=MeshSeed(global_size=0.5),
+            controls=[MeshControl(region_id="region:a", algorithm="structured")],
+            geometry_points={
+                "mid": MeshGeometryPoint(id="mid", x=1.0, y=0.5, role="interior_point"),
+            },
+            operation="generate",
+        )
+    )
+
+    assert result.warnings == []
+    assert len(result.mesh.nodes) == 15
+    assert len(result.mesh.elements) == 16
+    assert result.edge_to_node_ids["e0"] == [1, 2, 3, 4, 5]
+    assert result.edge_to_node_ids["e2"] == [15, 14, 13, 12, 11]
+    assert result.point_to_node_ids["mid"] == [8]
+
+
 def test_builtin_mesher_returns_real_geometry_point_mapping() -> None:
     mesher = BuiltinT3Mesher()
     region = MeshRegion(
@@ -107,6 +140,34 @@ def test_builtin_mesher_returns_real_geometry_point_mapping() -> None:
 
     assert set(result.point_to_node_ids) >= {"p0", "p1", "p2", "p3"}
     assert all(len(result.point_to_node_ids[point_id]) == 1 for point_id in ("p0", "p1", "p2", "p3"))
+
+
+def test_mesh_canvas_mesh_path_draws_shared_edges_once() -> None:
+    _get_app()
+    canvas = MeshCanvas()
+    canvas.resize(200, 200)
+    model = Model(
+        mesh=Mesh(
+            nodes=[
+                Node(id=1, x=0.0, y=0.0),
+                Node(id=2, x=1.0, y=0.0),
+                Node(id=3, x=1.0, y=1.0),
+                Node(id=4, x=0.0, y=1.0),
+            ],
+            elements=[
+                Element(id=1, type="T3", connectivity=[1, 2, 3], material_id=1),
+                Element(id=2, type="T3", connectivity=[1, 3, 4], material_id=1),
+            ],
+        ),
+        materials=[Material(id=1, young_modulus=1.0, poisson_ratio=0.3)],
+    )
+    canvas.set_model(model)
+    transform = canvas._make_transform([(0.0, 0.0), (1.0, 1.0)])
+    node_positions = {node.id: (node.x, node.y) for node in model.mesh.nodes}
+
+    path = canvas._mesh_path(transform, node_positions, cache_token="test")
+
+    assert path.elementCount() == 10
 
 
 def test_gmsh_mesher_preserves_geometry_mapping_when_available() -> None:

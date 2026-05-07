@@ -179,6 +179,11 @@ class MainWindow(QMainWindow):
         self._scene_mesh_state = SceneMeshState()
         self._resolved_scene_loads_by_def_id: dict[str, list[Load]] = {}
         self._resolved_scene_bcs_by_def_id: dict[str, list[BoundaryCondition]] = {}
+        self._pending_load_definition_name: str | None = None
+        self._pending_boundary_definition_name: str | None = None
+        self._pending_load_definition_step: str | None = None
+        self._pending_boundary_definition_step: str | None = None
+        self._pending_boundary_definition_type: str | None = None
         self._results_scope_type = "all"
         self._results_scope_target_id = ""
         self._last_mesh_quality_report: MeshQualityReport | None = None
@@ -498,6 +503,76 @@ class MainWindow(QMainWindow):
         self._material_tool_strip.setVisible(False)
         header_layout.addWidget(self._material_tool_strip)
 
+        self._load_bc_command_strip = QWidget()
+        self._load_bc_command_strip.setObjectName("LoadBcCommandStrip")
+        load_bc_strip_layout = QHBoxLayout(self._load_bc_command_strip)
+        load_bc_strip_layout.setContentsMargins(0, 0, 0, 0)
+        load_bc_strip_layout.setSpacing(6)
+
+        self._load_bc_command_label = QLabel()
+        self._load_bc_command_label.setObjectName("SubtleLabel")
+        load_bc_strip_layout.addWidget(self._load_bc_command_label)
+
+        self._btn_loadbc_tool_create_load = self._make_quick_tool_button(
+            self.style().standardIcon(QStyle.SP_FileDialogNewFolder),
+            self._open_create_load_dialog,
+        )
+        load_bc_strip_layout.addWidget(self._btn_loadbc_tool_create_load)
+        self._btn_loadbc_tool_load_manager = self._make_quick_tool_button(
+            self.style().standardIcon(QStyle.SP_FileDialogDetailedView),
+            self._open_load_manager_dialog,
+        )
+        load_bc_strip_layout.addWidget(self._btn_loadbc_tool_load_manager)
+        self._btn_loadbc_tool_create_bc = self._make_quick_tool_button(
+            self.style().standardIcon(QStyle.SP_DialogApplyButton),
+            self._open_create_boundary_dialog,
+        )
+        load_bc_strip_layout.addWidget(self._btn_loadbc_tool_create_bc)
+        self._btn_loadbc_tool_bc_manager = self._make_quick_tool_button(
+            self.style().standardIcon(QStyle.SP_FileDialogContentsView),
+            self._open_boundary_manager_dialog,
+        )
+        load_bc_strip_layout.addWidget(self._btn_loadbc_tool_bc_manager)
+        self._load_bc_command_separator = QLabel("|")
+        self._load_bc_command_separator.setObjectName("SubtleLabel")
+        load_bc_strip_layout.addWidget(self._load_bc_command_separator)
+        self._btn_loadbc_tool_pick_point = self._make_quick_tool_button(
+            self.style().standardIcon(QStyle.SP_ArrowRight),
+            self._start_pick_geometry_point_target,
+        )
+        load_bc_strip_layout.addWidget(self._btn_loadbc_tool_pick_point)
+        self._btn_loadbc_tool_pick_edge = self._make_quick_tool_button(
+            self.style().standardIcon(QStyle.SP_ArrowDown),
+            self._start_pick_geometry_edge_target,
+        )
+        load_bc_strip_layout.addWidget(self._btn_loadbc_tool_pick_edge)
+        self._btn_loadbc_tool_finish = self._make_quick_tool_button(
+            self.style().standardIcon(QStyle.SP_DialogOkButton),
+            self._finish_load_bc_geometry_picking,
+        )
+        load_bc_strip_layout.addWidget(self._btn_loadbc_tool_finish)
+        self._btn_loadbc_tool_cancel = self._make_quick_tool_button(
+            self.style().standardIcon(QStyle.SP_DialogCancelButton),
+            self._cancel_interactive_modes,
+        )
+        load_bc_strip_layout.addWidget(self._btn_loadbc_tool_cancel)
+
+        for button in (
+            self._btn_loadbc_tool_create_load,
+            self._btn_loadbc_tool_load_manager,
+            self._btn_loadbc_tool_create_bc,
+            self._btn_loadbc_tool_bc_manager,
+            self._btn_loadbc_tool_pick_point,
+            self._btn_loadbc_tool_pick_edge,
+            self._btn_loadbc_tool_finish,
+            self._btn_loadbc_tool_cancel,
+        ):
+            button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+
+        load_bc_strip_layout.addStretch(1)
+        self._load_bc_command_strip.setVisible(False)
+        header_layout.addWidget(self._load_bc_command_strip)
+
         self.setMenuWidget(header)
 
     def _make_quick_tool_button(self, icon: QIcon, handler) -> QToolButton:
@@ -619,6 +694,7 @@ class MainWindow(QMainWindow):
             button.setChecked(key == step)
         self._set_part_toolbar_visible(step == "part")
         self._set_material_toolbar_visible(step == "material")
+        self._set_load_bc_toolbar_visible(step == "load_bc")
 
         if step == "model":
             self._show_model_group(self._rock_model_group)
@@ -646,6 +722,10 @@ class MainWindow(QMainWindow):
     def _set_material_toolbar_visible(self, visible: bool) -> None:
         if hasattr(self, "_material_tool_strip"):
             self._material_tool_strip.setVisible(bool(visible))
+
+    def _set_load_bc_toolbar_visible(self, visible: bool) -> None:
+        if hasattr(self, "_load_bc_command_strip"):
+            self._load_bc_command_strip.setVisible(bool(visible))
 
     def _enable_part_canvas_add_point(self) -> None:
         self._activate_workflow("part")
@@ -1652,6 +1732,24 @@ class MainWindow(QMainWindow):
         self._load_bc_set_hint.setObjectName("SubtleLabel")
         set_layout.addWidget(self._load_bc_set_hint)
         layout.addWidget(self._load_bc_set_group)
+
+        manager_launch_group = QGroupBox()
+        manager_launch_layout = QHBoxLayout(manager_launch_group)
+        self._btn_create_load_dialog = QPushButton()
+        self._btn_create_load_dialog.clicked.connect(self._open_create_load_dialog)
+        manager_launch_layout.addWidget(self._btn_create_load_dialog)
+        self._btn_open_load_manager_dialog = QPushButton()
+        self._btn_open_load_manager_dialog.clicked.connect(self._open_load_manager_dialog)
+        manager_launch_layout.addWidget(self._btn_open_load_manager_dialog)
+        self._btn_create_bc_dialog = QPushButton()
+        self._btn_create_bc_dialog.clicked.connect(self._open_create_boundary_dialog)
+        manager_launch_layout.addWidget(self._btn_create_bc_dialog)
+        self._btn_open_bc_manager_dialog = QPushButton()
+        self._btn_open_bc_manager_dialog.clicked.connect(self._open_boundary_manager_dialog)
+        manager_launch_layout.addWidget(self._btn_open_bc_manager_dialog)
+        manager_launch_layout.addStretch(1)
+        layout.addWidget(manager_launch_group)
+        self._load_bc_manager_launch_group = manager_launch_group
 
         load_tools_group = QGroupBox()
         load_tools = QHBoxLayout(load_tools_group)
@@ -5209,6 +5307,105 @@ class MainWindow(QMainWindow):
             return self._ui(f"已解析 {len(self._resolved_scene_bcs_by_def_id[definition_id])}", f"Resolved {len(self._resolved_scene_bcs_by_def_id[definition_id])}")
         return self._ui("待网格/待解析", "Pending")
 
+    def _load_type_label(self, load_type: str) -> str:
+        return {
+            "concentrated": self._ui("集中力", "Point Force"),
+            "distributed": self._ui("边线载", "Line Load"),
+            "pressure": self._ui("边压力", "Edge Pressure"),
+            "body": self._ui("区域体力", "Body Force"),
+            "gravity": self._ui("自重", "Gravity"),
+        }.get(str(load_type), str(load_type))
+
+    def _target_set_label(self, set_id: str) -> str:
+        target_set = self._scene_project.geometry_sets.get(str(set_id))
+        if target_set is None:
+            return str(set_id)
+        mode_text = self._ui("几何" if target_set.binding_mode == "geometry" else "网格", "Geometry" if target_set.binding_mode == "geometry" else "Mesh")
+        return f"{target_set.name} [{target_set.entity_type}/{mode_text}:{len(target_set.entity_ids)}]"
+
+    def _load_target_entity_types(self, load_type: str) -> set[str]:
+        if load_type == "concentrated":
+            return {"point"}
+        if load_type in {"distributed", "pressure"}:
+            return {"edge"}
+        if load_type in {"body", "gravity"}:
+            return {"region", "component"}
+        return {"point", "edge", "region", "component"}
+
+    def _populate_target_set_combo(
+        self,
+        combo: QComboBox,
+        *,
+        entity_types: set[str],
+        current_set_id: str | None = None,
+    ) -> None:
+        combo.clear()
+        combo.addItem(self._ui("无（使用当前目标）", "None (use current target)"), "")
+        for set_id in sorted(self._scene_project.geometry_sets):
+            item = self._scene_project.geometry_sets[set_id]
+            if item.entity_type not in entity_types:
+                continue
+            combo.addItem(self._target_set_label(set_id), set_id)
+        if current_set_id:
+            idx = combo.findData(current_set_id)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+
+    def _next_default_load_name(self, load_type: str) -> str:
+        prefix = {
+            "concentrated": self._ui("集中力", "PointForce"),
+            "distributed": self._ui("边线载", "LineLoad"),
+            "pressure": self._ui("边压力", "Pressure"),
+            "body": self._ui("区域体力", "BodyForce"),
+            "gravity": self._ui("自重", "Gravity"),
+        }.get(str(load_type), self._ui("载荷", "Load"))
+        return f"{prefix}-{len(self._scene_project.load_definitions) + 1}"
+
+    def _next_default_boundary_name(self) -> str:
+        return self._ui(f"边界条件-{len(self._scene_project.boundary_definitions) + 1}", f"BC-{len(self._scene_project.boundary_definitions) + 1}")
+
+    def _consume_pending_load_name(self, load_type: str) -> str:
+        name = (self._pending_load_definition_name or "").strip()
+        self._pending_load_definition_name = None
+        return name or self._next_default_load_name(load_type)
+
+    def _consume_pending_boundary_name(self) -> str:
+        name = (self._pending_boundary_definition_name or "").strip()
+        self._pending_boundary_definition_name = None
+        return name or self._next_default_boundary_name()
+
+    def _consume_pending_load_step(self) -> str:
+        step = (self._pending_load_definition_step or "").strip()
+        self._pending_load_definition_step = None
+        return step or "Step-1"
+
+    def _consume_pending_boundary_step(self) -> str:
+        step = (self._pending_boundary_definition_step or "").strip()
+        self._pending_boundary_definition_step = None
+        return step or "Step-1"
+
+    def _consume_pending_boundary_type(self) -> str:
+        boundary_type = (self._pending_boundary_definition_type or "").strip()
+        self._pending_boundary_definition_type = None
+        return boundary_type or "displacement"
+
+    def _boundary_direction_label(self, direction: str) -> str:
+        return {"x": "U1", "y": "U2", "xy": "U1/U2"}.get(str(direction), str(direction).upper())
+
+    def _boundary_type_label(self, boundary_type: str, direction: str) -> str:
+        normalized = str(boundary_type or "displacement")
+        if normalized == "fixed":
+            return self._ui("完全固定", "Encastre")
+        if normalized == "roller_x":
+            return self._ui("滚动 X", "Roller X")
+        if normalized == "roller_y":
+            return self._ui("滚动 Y", "Roller Y")
+        if normalized == "symmetry_x":
+            return self._ui("X 对称", "X symmetry")
+        if normalized == "symmetry_y":
+            return self._ui("Y 对称", "Y symmetry")
+        return self._ui(f"位移约束 {self._boundary_direction_label(direction)}", f"Displacement {self._boundary_direction_label(direction)}")
+
     def _refresh_load_bc_managers(self) -> None:
         if not hasattr(self, "_load_manager_table") or not hasattr(self, "_bc_manager_table"):
             return
@@ -5221,13 +5418,7 @@ class MainWindow(QMainWindow):
         for row, definition in enumerate(load_items):
             target_set = self._scene_project.geometry_sets.get(definition.target_set_id)
             target_name = target_set.name if target_set is not None else definition.target_set_id
-            load_type = {
-                "concentrated": self._ui("集中力", "Point Force"),
-                "distributed": self._ui("边线载", "Line Load"),
-                "pressure": self._ui("边压力", "Edge Pressure"),
-                "body": self._ui("区域体力", "Body Force"),
-                "gravity": self._ui("自重", "Gravity"),
-            }.get(str(definition.load_type), str(definition.load_type))
+            load_type = self._load_type_label(str(definition.load_type))
             values = [
                 definition.name,
                 load_type,
@@ -5287,6 +5478,521 @@ class MainWindow(QMainWindow):
                     "Some load/BC definitions are unresolved; generate a geometry-preserving mesh or re-pick targets.",
                 )
             )
+
+    def _open_create_load_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self._ui("创建载荷", "Create Load"))
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        name_edit = QLineEdit(self._next_default_load_name("concentrated"))
+        form.addRow(self._ui("名称", "Name"), name_edit)
+        step_edit = QLineEdit("Step-1")
+        form.addRow(self._ui("分析步", "Step"), step_edit)
+        load_type_combo = QComboBox()
+        for label, data in (
+            (self._ui("集中力", "Point Force"), "concentrated"),
+            (self._ui("边线载", "Edge Line Load"), "distributed"),
+            (self._ui("边压力", "Edge Pressure"), "pressure"),
+            (self._ui("区域体力", "Region Body Force"), "body"),
+            (self._ui("自重", "Gravity"), "gravity"),
+        ):
+            load_type_combo.addItem(label, data)
+        form.addRow(self._ui("类型", "Type"), load_type_combo)
+        layout.addLayout(form)
+        hint = QLabel(
+            self._ui(
+                "继续后进入对应画布选择模式；选完目标后在右侧参数区确认并点击添加。",
+                "Continue enters the matching canvas-pick mode; after picking, confirm parameters on the side panel and add.",
+            )
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        buttons = QHBoxLayout()
+        continue_btn = QPushButton(self._ui("继续...", "Continue..."))
+        cancel_btn = QPushButton(self._ui("取消", "Cancel"))
+        buttons.addStretch(1)
+        buttons.addWidget(continue_btn)
+        buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+
+        def accept_create() -> None:
+            load_type = str(load_type_combo.currentData())
+            self._pending_load_definition_name = name_edit.text().strip() or self._next_default_load_name(load_type)
+            self._pending_load_definition_step = step_edit.text().strip() or "Step-1"
+            idx = self._load_bc_target_mode_combo.findData("geometry")
+            if idx >= 0:
+                self._load_bc_target_mode_combo.setCurrentIndex(idx)
+            if load_type == "concentrated":
+                self._start_pick_geometry_point_target()
+            elif load_type == "distributed":
+                type_idx = self._load_dist_type_combo.findData("distributed")
+                if type_idx >= 0:
+                    self._load_dist_type_combo.setCurrentIndex(type_idx)
+                self._start_pick_distributed_edge_target()
+            elif load_type == "pressure":
+                self._prepare_edge_pressure_creation()
+            elif load_type == "gravity":
+                self._prepare_gravity_creation()
+            else:
+                self._prepare_region_body_force_creation()
+            self._load_bc_set_hint.setText(
+                self._ui(
+                    f"正在创建 {self._pending_load_definition_name}：请选择目标，然后输入参数并点击添加。",
+                    f"Creating {self._pending_load_definition_name}: pick a target, enter parameters, then add.",
+                )
+            )
+            dialog.accept()
+
+        continue_btn.clicked.connect(accept_create)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec()
+
+    def _open_create_boundary_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self._ui("创建边界条件", "Create Boundary Condition"))
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        name_edit = QLineEdit(self._next_default_boundary_name())
+        form.addRow(self._ui("名称", "Name"), name_edit)
+        step_edit = QLineEdit("Step-1")
+        form.addRow(self._ui("分析步", "Step"), step_edit)
+        target_combo = QComboBox()
+        target_combo.addItem(self._ui("点", "Point"), "point")
+        target_combo.addItem(self._ui("边", "Edge"), "edge")
+        form.addRow(self._ui("区域类型", "Target"), target_combo)
+        bc_type_combo = QComboBox()
+        for label, data in (
+            (self._ui("完全固定 UX/UY", "Fixed UX/UY"), "xy"),
+            (self._ui("约束 UX", "Fix UX"), "x"),
+            (self._ui("约束 UY", "Fix UY"), "y"),
+            (self._ui("滚动 X（约束 UX）", "Roller X (fix UX)"), "x"),
+            (self._ui("滚动 Y（约束 UY）", "Roller Y (fix UY)"), "y"),
+        ):
+            bc_type_combo.addItem(label, data)
+        form.addRow(self._ui("类型", "Type"), bc_type_combo)
+        layout.addLayout(form)
+        hint = QLabel(
+            self._ui(
+                "继续后进入点/边选择模式；选完目标后点击“应用约束”。二维实体只支持 UX/UY 平动自由度。",
+                "Continue enters point/edge pick mode; after picking, click Apply BC. 2D continuum supports UX/UY translational DOFs.",
+            )
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        buttons = QHBoxLayout()
+        continue_btn = QPushButton(self._ui("继续...", "Continue..."))
+        cancel_btn = QPushButton(self._ui("取消", "Cancel"))
+        buttons.addStretch(1)
+        buttons.addWidget(continue_btn)
+        buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+
+        def accept_create() -> None:
+            self._pending_boundary_definition_name = name_edit.text().strip() or self._next_default_boundary_name()
+            self._pending_boundary_definition_step = step_edit.text().strip() or "Step-1"
+            self._set_bc_direction_and_value(str(bc_type_combo.currentData()), 0.0)
+            idx = self._load_bc_target_mode_combo.findData("geometry")
+            if idx >= 0:
+                self._load_bc_target_mode_combo.setCurrentIndex(idx)
+            target_idx = self._bc_target_combo.findData(str(target_combo.currentData()))
+            if target_idx >= 0:
+                self._bc_target_combo.setCurrentIndex(target_idx)
+            if str(target_combo.currentData()) == "edge":
+                self._start_pick_bc_edge()
+            else:
+                self._start_pick_geometry_point_target()
+            self._load_bc_set_hint.setText(
+                self._ui(
+                    f"正在创建 {self._pending_boundary_definition_name}：请选择目标，然后点击应用约束。",
+                    f"Creating {self._pending_boundary_definition_name}: pick a target, then apply the BC.",
+                )
+            )
+            dialog.accept()
+
+        continue_btn.clicked.connect(accept_create)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec()
+
+    def _rename_load_definition(self, definition_id: str) -> None:
+        definition = self._scene_project.load_definitions.get(str(definition_id))
+        if definition is None:
+            return
+        name, ok = QInputDialog.getText(
+            self,
+            self._ui("重命名载荷", "Rename Load"),
+            self._ui("新名称", "New name"),
+            text=definition.name,
+        )
+        if not ok or not name.strip():
+            return
+        definition.name = name.strip()
+        self._refresh_after_load_bc_definition_change("Load definition renamed")
+
+    def _rename_boundary_definition(self, definition_id: str) -> None:
+        definition = self._scene_project.boundary_definitions.get(str(definition_id))
+        if definition is None:
+            return
+        name, ok = QInputDialog.getText(
+            self,
+            self._ui("重命名边界条件", "Rename Boundary Condition"),
+            self._ui("新名称", "New name"),
+            text=definition.name,
+        )
+        if not ok or not name.strip():
+            return
+        definition.name = name.strip()
+        self._refresh_after_load_bc_definition_change("Boundary definition renamed")
+
+    def _copy_load_definition(self, definition_id: str) -> str | None:
+        definition = self._scene_project.load_definitions.get(str(definition_id))
+        if definition is None:
+            return None
+        new_id = self._next_load_definition_id()
+        copied = copy.deepcopy(definition)
+        copied.id = new_id
+        copied.name = f"{definition.name}-Copy"
+        self._scene_project.load_definitions[new_id] = copied
+        self._refresh_after_load_bc_definition_change("Load definition copied")
+        return new_id
+
+    def _copy_boundary_definition(self, definition_id: str) -> str | None:
+        definition = self._scene_project.boundary_definitions.get(str(definition_id))
+        if definition is None:
+            return None
+        new_id = self._next_boundary_definition_id()
+        copied = copy.deepcopy(definition)
+        copied.id = new_id
+        copied.name = f"{definition.name}-Copy"
+        self._scene_project.boundary_definitions[new_id] = copied
+        self._refresh_after_load_bc_definition_change("Boundary definition copied")
+        return new_id
+
+    def _open_edit_load_definition_dialog(self, definition_id: str) -> None:
+        definition = self._scene_project.load_definitions.get(str(definition_id))
+        if definition is None:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self._ui("编辑载荷", "Edit Load"))
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        name_edit = QLineEdit(definition.name)
+        form.addRow(self._ui("名称", "Name"), name_edit)
+        type_label = QLabel(self._load_type_label(str(definition.load_type)))
+        form.addRow(self._ui("类型", "Type"), type_label)
+        step_edit = QLineEdit(definition.step)
+        form.addRow(self._ui("分析步", "Step"), step_edit)
+        target_combo = QComboBox()
+        self._populate_target_set_combo(
+            target_combo,
+            entity_types=self._load_target_entity_types(str(definition.load_type)),
+            current_set_id=definition.target_set_id,
+        )
+        form.addRow(self._ui("目标集合", "Target Set"), target_combo)
+        vector_x = QDoubleSpinBox()
+        vector_x.setDecimals(6)
+        vector_x.setRange(-1e12, 1e12)
+        vector_x.setValue(float(definition.vector_x))
+        form.addRow(self._ui("方向 X", "Dir X"), vector_x)
+        vector_y = QDoubleSpinBox()
+        vector_y.setDecimals(6)
+        vector_y.setRange(-1e12, 1e12)
+        vector_y.setValue(float(definition.vector_y))
+        form.addRow(self._ui("方向 Y", "Dir Y"), vector_y)
+        magnitude = QDoubleSpinBox()
+        magnitude.setDecimals(6)
+        magnitude.setRange(-1e18, 1e18)
+        magnitude.setValue(float(definition.magnitude))
+        form.addRow(self._ui("大小", "Magnitude"), magnitude)
+        direction_mode = QComboBox()
+        for label, data in (
+            (self._ui("自定义向量", "Custom Vector"), "vector"),
+            (self._ui("边法向", "Edge Normal"), "normal"),
+            (self._ui("反向法向", "Reverse Normal"), "reverse_normal"),
+        ):
+            direction_mode.addItem(label, data)
+        mode_idx = direction_mode.findData(getattr(definition, "direction_mode", "vector"))
+        if mode_idx >= 0:
+            direction_mode.setCurrentIndex(mode_idx)
+        direction_mode.setEnabled(definition.load_type == "pressure")
+        form.addRow(self._ui("方向模式", "Direction Mode"), direction_mode)
+        layout.addLayout(form)
+        buttons = QHBoxLayout()
+        ok_btn = QPushButton(self._ui("确定", "OK"))
+        cancel_btn = QPushButton(self._ui("取消", "Cancel"))
+        buttons.addStretch(1)
+        buttons.addWidget(ok_btn)
+        buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+
+        def apply_edit() -> None:
+            definition.name = name_edit.text().strip() or definition.name
+            definition.step = step_edit.text().strip() or definition.step
+            selected_set_id = str(target_combo.currentData() or "")
+            target_set = self._scene_project.geometry_sets.get(selected_set_id)
+            if target_set is not None:
+                definition.target_set_id = target_set.id
+                definition.target_entity_type = target_set.entity_type
+            definition.vector_x = float(vector_x.value())
+            definition.vector_y = float(vector_y.value())
+            definition.magnitude = float(magnitude.value())
+            definition.direction_mode = str(direction_mode.currentData())
+            self._refresh_after_load_bc_definition_change("Load definition edited")
+            dialog.accept()
+
+        ok_btn.clicked.connect(apply_edit)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec()
+
+    def _open_edit_boundary_definition_dialog(self, definition_id: str) -> None:
+        definition = self._scene_project.boundary_definitions.get(str(definition_id))
+        if definition is None:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self._ui("编辑边界条件", "Edit Boundary Condition"))
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        name_edit = QLineEdit(definition.name)
+        form.addRow(self._ui("名称", "Name"), name_edit)
+        step_edit = QLineEdit(definition.step)
+        form.addRow(self._ui("分析步", "Step"), step_edit)
+        target_combo = QComboBox()
+        self._populate_target_set_combo(target_combo, entity_types={"point", "edge"}, current_set_id=definition.target_set_id)
+        form.addRow(self._ui("目标集合", "Target Set"), target_combo)
+        direction_combo = QComboBox()
+        direction_combo.addItem("UX", "x")
+        direction_combo.addItem("UY", "y")
+        direction_combo.addItem("UX/UY", "xy")
+        direction_idx = direction_combo.findData(definition.direction)
+        if direction_idx >= 0:
+            direction_combo.setCurrentIndex(direction_idx)
+        form.addRow(self._ui("自由度", "DOF"), direction_combo)
+        value_spin = QDoubleSpinBox()
+        value_spin.setDecimals(6)
+        value_spin.setRange(-1e12, 1e12)
+        value_spin.setValue(float(definition.value))
+        form.addRow(self._ui("值", "Value"), value_spin)
+        layout.addLayout(form)
+        buttons = QHBoxLayout()
+        ok_btn = QPushButton(self._ui("确定", "OK"))
+        cancel_btn = QPushButton(self._ui("取消", "Cancel"))
+        buttons.addStretch(1)
+        buttons.addWidget(ok_btn)
+        buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+
+        def apply_edit() -> None:
+            definition.name = name_edit.text().strip() or definition.name
+            definition.step = step_edit.text().strip() or definition.step
+            selected_set_id = str(target_combo.currentData() or "")
+            target_set = self._scene_project.geometry_sets.get(selected_set_id)
+            if target_set is not None and target_set.entity_type in {"point", "edge"}:
+                definition.target_set_id = target_set.id
+                definition.target_entity_type = target_set.entity_type
+            definition.direction = str(direction_combo.currentData())
+            definition.value = float(value_spin.value())
+            self._refresh_after_load_bc_definition_change("Boundary definition edited")
+            dialog.accept()
+
+        ok_btn.clicked.connect(apply_edit)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec()
+
+    def _open_load_manager_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self._ui("载荷管理器", "Load Manager"))
+        dialog.resize(780, 460)
+        layout = QVBoxLayout(dialog)
+        content = QHBoxLayout()
+        table = QTableWidget(0, 5)
+        table.setHorizontalHeaderLabels([
+            self._ui("名称", "Name"),
+            self._ui("Step-1", "Step-1"),
+            self._ui("类型", "Type"),
+            self._ui("区域", "Region"),
+            self._ui("状态", "Status"),
+        ])
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        content.addWidget(table)
+        side = QVBoxLayout()
+        edit_btn = QPushButton(self._ui("编辑...", "Edit..."))
+        copy_btn = QPushButton(self._ui("复制...", "Copy..."))
+        rename_btn = QPushButton(self._ui("重命名...", "Rename..."))
+        delete_btn = QPushButton(self._ui("删除...", "Delete..."))
+        toggle_btn = QPushButton(self._ui("激活/抑制", "Activate/Suppress"))
+        locate_btn = QPushButton(self._ui("定位", "Locate"))
+        for button in (edit_btn, copy_btn, rename_btn, delete_btn, toggle_btn, locate_btn):
+            side.addWidget(button)
+        side.addStretch(1)
+        content.addLayout(side)
+        layout.addLayout(content)
+        detail = QLabel()
+        detail.setWordWrap(True)
+        layout.addWidget(detail)
+        bottom = QHBoxLayout()
+        create_btn = QPushButton(self._ui("创建...", "Create..."))
+        close_btn = QPushButton(self._ui("关闭", "Close"))
+        bottom.addWidget(create_btn)
+        bottom.addStretch(1)
+        bottom.addWidget(close_btn)
+        layout.addLayout(bottom)
+
+        def selected_id() -> str | None:
+            row = table.currentRow()
+            if row < 0:
+                return None
+            item = table.item(row, 0)
+            if item is None:
+                return None
+            data = item.data(Qt.UserRole)
+            return str(data) if isinstance(data, str) else None
+
+        def refresh() -> None:
+            items = sorted(self._scene_project.load_definitions.values(), key=lambda item: item.id)
+            table.setRowCount(len(items))
+            for row, definition in enumerate(items):
+                values = [
+                    definition.name,
+                    definition.step,
+                    self._load_type_label(str(definition.load_type)),
+                    self._target_set_label(definition.target_set_id),
+                    self._definition_status_text(definition_id=definition.id, active=bool(definition.active), kind="load"),
+                ]
+                for col, text in enumerate(values):
+                    item = QTableWidgetItem(text)
+                    item.setData(Qt.UserRole, definition.id)
+                    table.setItem(row, col, item)
+            if items and table.currentRow() < 0:
+                table.selectRow(0)
+
+        def update_detail() -> None:
+            definition = self._scene_project.load_definitions.get(selected_id() or "")
+            if definition is None:
+                detail.setText(self._ui("未选择载荷。", "No load selected."))
+                return
+            detail.setText(
+                self._ui(
+                    f"分析步: {definition.step}\n载荷 类型: {self._load_type_label(str(definition.load_type))}\n载荷 状态: {'已创建' if definition.active else '已抑制'}",
+                    f"Step: {definition.step}\nLoad type: {self._load_type_label(str(definition.load_type))}\nStatus: {'Created' if definition.active else 'Suppressed'}",
+                )
+            )
+
+        def refresh_all() -> None:
+            refresh()
+            self._refresh_load_bc_managers()
+            update_detail()
+
+        table.itemSelectionChanged.connect(update_detail)
+        edit_btn.clicked.connect(lambda: (self._open_edit_load_definition_dialog(selected_id() or ""), refresh_all()))
+        copy_btn.clicked.connect(lambda: (self._copy_load_definition(selected_id() or ""), refresh_all()))
+        rename_btn.clicked.connect(lambda: (self._rename_load_definition(selected_id() or ""), refresh_all()))
+        delete_btn.clicked.connect(lambda: (self._scene_project.load_definitions.pop(selected_id() or "", None), self._refresh_after_load_bc_definition_change("Load definition deleted"), refresh_all()))
+        toggle_btn.clicked.connect(lambda: (setattr(self._scene_project.load_definitions[selected_id() or ""], "active", not self._scene_project.load_definitions[selected_id() or ""].active) if selected_id() in self._scene_project.load_definitions else None, self._refresh_after_load_bc_definition_change("Load definition activation changed"), refresh_all()))
+        locate_btn.clicked.connect(lambda: self._locate_load_bc_target_set(self._scene_project.load_definitions[selected_id() or ""].target_set_id) if selected_id() in self._scene_project.load_definitions else None)
+        create_btn.clicked.connect(lambda: (dialog.accept(), self._open_create_load_dialog()))
+        close_btn.clicked.connect(dialog.accept)
+        refresh_all()
+        dialog.exec()
+
+    def _open_boundary_manager_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self._ui("边界条件管理器", "Boundary Condition Manager"))
+        dialog.resize(780, 460)
+        layout = QVBoxLayout(dialog)
+        content = QHBoxLayout()
+        table = QTableWidget(0, 5)
+        table.setHorizontalHeaderLabels([
+            self._ui("名称", "Name"),
+            self._ui("Initial", "Initial"),
+            self._ui("Step-1", "Step-1"),
+            self._ui("类型", "Type"),
+            self._ui("状态", "Status"),
+        ])
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        content.addWidget(table)
+        side = QVBoxLayout()
+        edit_btn = QPushButton(self._ui("编辑...", "Edit..."))
+        copy_btn = QPushButton(self._ui("复制...", "Copy..."))
+        rename_btn = QPushButton(self._ui("重命名...", "Rename..."))
+        delete_btn = QPushButton(self._ui("删除...", "Delete..."))
+        toggle_btn = QPushButton(self._ui("激活/抑制", "Activate/Suppress"))
+        locate_btn = QPushButton(self._ui("定位", "Locate"))
+        for button in (edit_btn, copy_btn, rename_btn, delete_btn, toggle_btn, locate_btn):
+            side.addWidget(button)
+        side.addStretch(1)
+        content.addLayout(side)
+        layout.addLayout(content)
+        detail = QLabel()
+        detail.setWordWrap(True)
+        layout.addWidget(detail)
+        bottom = QHBoxLayout()
+        create_btn = QPushButton(self._ui("创建...", "Create..."))
+        close_btn = QPushButton(self._ui("关闭", "Close"))
+        bottom.addWidget(create_btn)
+        bottom.addStretch(1)
+        bottom.addWidget(close_btn)
+        layout.addLayout(bottom)
+
+        def selected_id() -> str | None:
+            row = table.currentRow()
+            if row < 0:
+                return None
+            item = table.item(row, 0)
+            if item is None:
+                return None
+            data = item.data(Qt.UserRole)
+            return str(data) if isinstance(data, str) else None
+
+        def refresh() -> None:
+            items = sorted(self._scene_project.boundary_definitions.values(), key=lambda item: item.id)
+            table.setRowCount(len(items))
+            for row, definition in enumerate(items):
+                values = [
+                    definition.name,
+                    self._ui("已创建", "Created") if definition.step.lower() == "initial" else self._ui("传递", "Propagated"),
+                    self._ui("已创建", "Created") if definition.step.lower() != "initial" else self._ui("传递", "Propagated"),
+                    self._ui("位移/完全固定", "Displacement/Fixed"),
+                    self._definition_status_text(definition_id=definition.id, active=bool(definition.active), kind="bc"),
+                ]
+                for col, text in enumerate(values):
+                    item = QTableWidgetItem(text)
+                    item.setData(Qt.UserRole, definition.id)
+                    table.setItem(row, col, item)
+            if items and table.currentRow() < 0:
+                table.selectRow(0)
+
+        def update_detail() -> None:
+            definition = self._scene_project.boundary_definitions.get(selected_id() or "")
+            if definition is None:
+                detail.setText(self._ui("未选择边界条件。", "No boundary condition selected."))
+                return
+            dof_text = {"x": "UX", "y": "UY", "xy": "UX/UY"}.get(str(definition.direction), str(definition.direction))
+            detail.setText(
+                self._ui(
+                    f"分析步: {definition.step}\n边界条件 类型: 位移/完全固定\n目标: {self._target_set_label(definition.target_set_id)}\n自由度: {dof_text}",
+                    f"Step: {definition.step}\nBC type: Displacement/Fixed\nTarget: {self._target_set_label(definition.target_set_id)}\nDOF: {dof_text}",
+                )
+            )
+
+        def refresh_all() -> None:
+            refresh()
+            self._refresh_load_bc_managers()
+            update_detail()
+
+        table.itemSelectionChanged.connect(update_detail)
+        edit_btn.clicked.connect(lambda: (self._open_edit_boundary_definition_dialog(selected_id() or ""), refresh_all()))
+        copy_btn.clicked.connect(lambda: (self._copy_boundary_definition(selected_id() or ""), refresh_all()))
+        rename_btn.clicked.connect(lambda: (self._rename_boundary_definition(selected_id() or ""), refresh_all()))
+        delete_btn.clicked.connect(lambda: (self._scene_project.boundary_definitions.pop(selected_id() or "", None), self._refresh_after_load_bc_definition_change("Boundary definition deleted"), refresh_all()))
+        toggle_btn.clicked.connect(lambda: (setattr(self._scene_project.boundary_definitions[selected_id() or ""], "active", not self._scene_project.boundary_definitions[selected_id() or ""].active) if selected_id() in self._scene_project.boundary_definitions else None, self._refresh_after_load_bc_definition_change("Boundary definition activation changed"), refresh_all()))
+        locate_btn.clicked.connect(lambda: self._locate_load_bc_target_set(self._scene_project.boundary_definitions[selected_id() or ""].target_set_id) if selected_id() in self._scene_project.boundary_definitions else None)
+        create_btn.clicked.connect(lambda: (dialog.accept(), self._open_create_boundary_dialog()))
+        close_btn.clicked.connect(dialog.accept)
+        refresh_all()
+        dialog.exec()
 
     def _locate_load_bc_target_set(self, set_id: str) -> None:
         idx = self._load_bc_target_set_combo.findData(set_id)
@@ -5607,14 +6313,14 @@ class MainWindow(QMainWindow):
                     entity_type="point",
                     geometry_ids=self._selected_geometry_point_ids,
                     preferred_name=self._ui("几何点集合", "Geometry Point Set"),
-                    preferred_set_id=preferred_point_set_id,
+                    preferred_set_id=None if self._is_geometry_set_used_by_load_bc_definition(preferred_point_set_id) else preferred_point_set_id,
                 )
             elif target_type == "edge":
                 set_id = self._upsert_geometry_set_from_geometry_ids(
                     entity_type="edge",
                     geometry_ids=self._selected_geometry_edge_ids,
                     preferred_name=self._ui("几何边集合", "Geometry Edge Set"),
-                    preferred_set_id=preferred_edge_set_id,
+                    preferred_set_id=None if self._is_geometry_set_used_by_load_bc_definition(preferred_edge_set_id) else preferred_edge_set_id,
                 )
             else:
                 region_ids = [
@@ -5756,6 +6462,36 @@ class MainWindow(QMainWindow):
         if not set_id:
             return None
         return self._scene_project.geometry_sets.get(set_id)
+
+    def _is_geometry_set_used_by_load_bc_definition(self, set_id: str | None) -> bool:
+        if not set_id:
+            return False
+        normalized = str(set_id)
+        return any(
+            definition.target_set_id == normalized
+            for definition in self._scene_project.load_definitions.values()
+        ) or any(
+            definition.target_set_id == normalized
+            for definition in self._scene_project.boundary_definitions.values()
+        )
+
+    def _preferred_geometry_set_id_for_pick(self, entity_type: str, *, allow_referenced: bool = False) -> str | None:
+        candidates: list[str] = []
+        current_set = self._current_load_bc_target_set()
+        if current_set is not None and current_set.binding_mode == "geometry" and current_set.entity_type == entity_type:
+            candidates.append(current_set.id)
+        if self._last_geometry_pick_set_id:
+            candidates.append(self._last_geometry_pick_set_id)
+        for candidate_id in candidates:
+            candidate = self._scene_project.geometry_sets.get(str(candidate_id))
+            if candidate is None:
+                continue
+            if candidate.binding_mode != "geometry" or candidate.entity_type != entity_type:
+                continue
+            if not allow_referenced and self._is_geometry_set_used_by_load_bc_definition(candidate.id):
+                continue
+            return candidate.id
+        return None
 
     def _on_load_bc_target_mode_changed(self, _: int) -> None:
         if self._pending_pick_context in {
@@ -5919,7 +6655,12 @@ class MainWindow(QMainWindow):
             )
             return
         current_set = self._current_load_bc_target_set()
-        if current_set is not None and current_set.binding_mode == "geometry" and current_set.entity_type == "point":
+        if (
+            current_set is not None
+            and current_set.binding_mode == "geometry"
+            and current_set.entity_type == "point"
+            and not self._is_geometry_set_used_by_load_bc_definition(current_set.id)
+        ):
             self._selected_geometry_point_ids = {str(item) for item in current_set.entity_ids}
         self._pending_pick_context = "geometry_point_set_multi"
         self._editor_canvas_edit_enable.setChecked(True)
@@ -5953,7 +6694,12 @@ class MainWindow(QMainWindow):
             )
             return
         current_set = self._current_load_bc_target_set()
-        if current_set is not None and current_set.binding_mode == "geometry" and current_set.entity_type == "point":
+        if (
+            current_set is not None
+            and current_set.binding_mode == "geometry"
+            and current_set.entity_type == "point"
+            and not self._is_geometry_set_used_by_load_bc_definition(current_set.id)
+        ):
             self._selected_geometry_point_ids = {str(item) for item in current_set.entity_ids}
         self._pending_pick_context = "geometry_split_edge_point"
         self._editor_canvas_edit_enable.setChecked(True)
@@ -6055,12 +6801,7 @@ class MainWindow(QMainWindow):
 
     def _commit_geometry_point_selection_to_set(self, *, point_id: str, message: str) -> None:
         self._selected_geometry_point_ids.add(str(point_id))
-        current_set = self._current_load_bc_target_set()
-        preferred_set_id = (
-            current_set.id
-            if current_set is not None and current_set.binding_mode == "geometry" and current_set.entity_type == "point"
-            else self._last_geometry_pick_set_id
-        )
+        preferred_set_id = self._preferred_geometry_set_id_for_pick("point")
         set_id = self._upsert_geometry_set_from_geometry_ids(
             entity_type="point",
             geometry_ids=sorted(self._selected_geometry_point_ids),
@@ -8328,12 +9069,7 @@ class MainWindow(QMainWindow):
             return
         if self._current_load_bc_target_mode() == "geometry":
             if self._current_load_bc_target_set_id() is None and self._selected_geometry_point_ids:
-                current_set = self._current_load_bc_target_set()
-                preferred_set_id = (
-                    current_set.id
-                    if current_set is not None and current_set.binding_mode == "geometry" and current_set.entity_type == "point"
-                    else self._last_geometry_pick_set_id
-                )
+                preferred_set_id = self._preferred_geometry_set_id_for_pick("point")
                 self._upsert_geometry_set_from_geometry_ids(
                     entity_type="point",
                     geometry_ids=self._selected_geometry_point_ids,
@@ -8366,7 +9102,7 @@ class MainWindow(QMainWindow):
             load_id = self._next_load_definition_id()
             self._scene_project.load_definitions[load_id] = LoadDefinition(
                 id=load_id,
-                name=self._ui(f"集中力-{len(self._scene_project.load_definitions) + 1}", f"Concentrated-{len(self._scene_project.load_definitions) + 1}"),
+                name=self._consume_pending_load_name("concentrated"),
                 target_set_id=target_set.id,
                 target_entity_type="point",
                 load_type="concentrated",
@@ -8374,6 +9110,7 @@ class MainWindow(QMainWindow):
                 vector_y=vy,
                 magnitude=magnitude,
                 profile="uniform",
+                step=self._consume_pending_load_step(),
             )
             unresolved = self._resolve_scene_load_bc_definitions_to_model() if self._model.mesh.nodes else []
             self._sync_load_bc_geometry_overlay()
@@ -8488,12 +9225,7 @@ class MainWindow(QMainWindow):
 
         if self._current_load_bc_target_mode() == "geometry":
             if self._current_load_bc_target_set_id() is None and self._selected_geometry_edge_ids:
-                current_set = self._current_load_bc_target_set()
-                preferred_set_id = (
-                    current_set.id
-                    if current_set is not None and current_set.binding_mode == "geometry" and current_set.entity_type == "edge"
-                    else self._last_geometry_pick_set_id
-                )
+                preferred_set_id = self._preferred_geometry_set_id_for_pick("edge")
                 self._upsert_geometry_set_from_geometry_ids(
                     entity_type="edge",
                     geometry_ids=self._selected_geometry_edge_ids,
@@ -8523,11 +9255,7 @@ class MainWindow(QMainWindow):
             load_id = self._next_load_definition_id()
             self._scene_project.load_definitions[load_id] = LoadDefinition(
                 id=load_id,
-                name=(
-                    self._ui(f"边压力-{len(self._scene_project.load_definitions) + 1}", f"Pressure-{len(self._scene_project.load_definitions) + 1}")
-                    if load_type == "pressure"
-                    else self._ui(f"边线载-{len(self._scene_project.load_definitions) + 1}", f"LineLoad-{len(self._scene_project.load_definitions) + 1}")
-                ),
+                name=self._consume_pending_load_name("pressure" if load_type == "pressure" else "distributed"),
                 target_set_id=target_set.id,
                 target_entity_type="edge",
                 load_type="pressure" if load_type == "pressure" else "distributed",
@@ -8535,6 +9263,7 @@ class MainWindow(QMainWindow):
                 vector_y=vy,
                 magnitude=total,
                 profile="linear" if profile == "linear" else "uniform",
+                step=self._consume_pending_load_step(),
                 direction_mode="normal" if load_type == "pressure" and direction_mode not in {"vector", "normal", "reverse_normal"} else direction_mode,
             )
             unresolved = self._resolve_scene_load_bc_definitions_to_model() if self._model.mesh.nodes else []
@@ -8712,9 +9441,9 @@ class MainWindow(QMainWindow):
         self._scene_project.load_definitions[load_id] = LoadDefinition(
             id=load_id,
             name=(
-                self._ui(f"自重-{len(self._scene_project.load_definitions) + 1}", f"Gravity-{len(self._scene_project.load_definitions) + 1}")
+                self._consume_pending_load_name("gravity")
                 if load_type == "gravity"
-                else self._ui(f"区域体力-{len(self._scene_project.load_definitions) + 1}", f"BodyForce-{len(self._scene_project.load_definitions) + 1}")
+                else self._consume_pending_load_name("body")
             ),
             target_set_id=target_set.id,
             target_entity_type=target_set.entity_type,
@@ -8723,6 +9452,7 @@ class MainWindow(QMainWindow):
             vector_y=vy,
             magnitude=intensity,
             profile="uniform",
+            step=self._consume_pending_load_step(),
             direction_mode="gravity" if load_type == "gravity" else "vector",
         )
         unresolved = self._resolve_scene_load_bc_definitions_to_model() if self._model.mesh.nodes else []
@@ -8766,12 +9496,7 @@ class MainWindow(QMainWindow):
         if self._current_load_bc_target_mode() == "geometry":
             if self._current_load_bc_target_set_id() is None:
                 if target_type == "point" and self._selected_geometry_point_ids:
-                    current_set = self._current_load_bc_target_set()
-                    preferred_set_id = (
-                        current_set.id
-                        if current_set is not None and current_set.binding_mode == "geometry" and current_set.entity_type == "point"
-                        else self._last_geometry_pick_set_id
-                    )
+                    preferred_set_id = self._preferred_geometry_set_id_for_pick("point")
                     self._upsert_geometry_set_from_geometry_ids(
                         entity_type="point",
                         geometry_ids=self._selected_geometry_point_ids,
@@ -8779,12 +9504,7 @@ class MainWindow(QMainWindow):
                         preferred_set_id=preferred_set_id,
                     )
                 elif target_type == "edge" and self._selected_geometry_edge_ids:
-                    current_set = self._current_load_bc_target_set()
-                    preferred_set_id = (
-                        current_set.id
-                        if current_set is not None and current_set.binding_mode == "geometry" and current_set.entity_type == "edge"
-                        else self._last_geometry_pick_set_id
-                    )
+                    preferred_set_id = self._preferred_geometry_set_id_for_pick("edge")
                     self._upsert_geometry_set_from_geometry_ids(
                         entity_type="edge",
                         geometry_ids=self._selected_geometry_edge_ids,
@@ -8808,11 +9528,12 @@ class MainWindow(QMainWindow):
             bc_id = self._next_boundary_definition_id()
             self._scene_project.boundary_definitions[bc_id] = BoundaryDefinition(
                 id=bc_id,
-                name=self._ui(f"约束-{len(self._scene_project.boundary_definitions) + 1}", f"BC-{len(self._scene_project.boundary_definitions) + 1}"),
+                name=self._consume_pending_boundary_name(),
                 target_set_id=target_set.id,
                 target_entity_type="point" if target_set.entity_type == "point" else "edge",
                 direction="x" if direction == "x" else "y" if direction == "y" else "xy",
                 value=value,
+                step=self._consume_pending_boundary_step(),
             )
             unresolved = self._resolve_scene_load_bc_definitions_to_model() if self._model.mesh.nodes else []
             self._sync_load_bc_geometry_overlay()
@@ -11044,12 +11765,7 @@ class MainWindow(QMainWindow):
                 )
                 return
             self._selected_geometry_point_ids = {point_id}
-            current_set = self._current_load_bc_target_set()
-            preferred_set_id = (
-                current_set.id
-                if current_set is not None and current_set.binding_mode == "geometry" and current_set.entity_type == "point"
-                else self._last_geometry_pick_set_id
-            )
+            preferred_set_id = self._preferred_geometry_set_id_for_pick("point")
             set_id = self._upsert_geometry_set_from_geometry_ids(
                 entity_type="point",
                 geometry_ids=[point_id],
@@ -11076,12 +11792,7 @@ class MainWindow(QMainWindow):
                 self._selected_geometry_point_ids.remove(point_id)
             else:
                 self._selected_geometry_point_ids.add(point_id)
-            current_set = self._current_load_bc_target_set()
-            preferred_set_id = (
-                current_set.id
-                if current_set is not None and current_set.binding_mode == "geometry" and current_set.entity_type == "point"
-                else self._last_geometry_pick_set_id
-            )
+            preferred_set_id = self._preferred_geometry_set_id_for_pick("point")
             set_id = self._upsert_geometry_set_from_geometry_ids(
                 entity_type="point",
                 geometry_ids=sorted(self._selected_geometry_point_ids),
@@ -11109,12 +11820,7 @@ class MainWindow(QMainWindow):
                 )
                 return
             self._selected_geometry_point_ids.add(point_id)
-            current_set = self._current_load_bc_target_set()
-            preferred_set_id = (
-                current_set.id
-                if current_set is not None and current_set.binding_mode == "geometry" and current_set.entity_type == "point"
-                else self._last_geometry_pick_set_id
-            )
+            preferred_set_id = self._preferred_geometry_set_id_for_pick("point")
             set_id = self._upsert_geometry_set_from_geometry_ids(
                 entity_type="point",
                 geometry_ids=sorted(self._selected_geometry_point_ids),
@@ -11143,12 +11849,7 @@ class MainWindow(QMainWindow):
                 )
                 return
             self._selected_geometry_edge_ids = {edge_id}
-            current_set = self._current_load_bc_target_set()
-            preferred_set_id = (
-                current_set.id
-                if current_set is not None and current_set.binding_mode == "geometry" and current_set.entity_type == "edge"
-                else self._last_geometry_pick_set_id
-            )
+            preferred_set_id = self._preferred_geometry_set_id_for_pick("edge")
             set_id = self._upsert_geometry_set_from_geometry_ids(
                 entity_type="edge",
                 geometry_ids=[edge_id],
@@ -11475,6 +12176,23 @@ class MainWindow(QMainWindow):
             self._btn_material_tool_pick_face.setToolTip(self._tr("material.strip.pick", "选择要分配的区域"))
             self._btn_material_tool_assign.setToolTip(self._tr("material.strip.assign", "将当前材料分配到所选区域"))
             self._btn_material_tool_delete.setToolTip(self._tr("material.strip.delete", "删除当前材料（需未被单元使用）"))
+            self._load_bc_command_label.setText(self._tr("loadbc.strip.label", "载荷/约束工具"))
+            self._btn_loadbc_tool_create_load.setText(self._tr("loadbc.strip.create_load", "创建载荷"))
+            self._btn_loadbc_tool_load_manager.setText(self._tr("loadbc.strip.load_manager", "载荷管理器"))
+            self._btn_loadbc_tool_create_bc.setText(self._tr("loadbc.strip.create_bc", "创建边界"))
+            self._btn_loadbc_tool_bc_manager.setText(self._tr("loadbc.strip.bc_manager", "边界管理器"))
+            self._btn_loadbc_tool_pick_point.setText(self._tr("loadbc.strip.pick_point", "选点"))
+            self._btn_loadbc_tool_pick_edge.setText(self._tr("loadbc.strip.pick_edge", "选边"))
+            self._btn_loadbc_tool_finish.setText(self._tr("loadbc.strip.finish", "完成"))
+            self._btn_loadbc_tool_cancel.setText(self._tr("loadbc.strip.cancel", "取消"))
+            self._btn_loadbc_tool_create_load.setToolTip(self._tr("loadbc.strip.create_load.tip", "打开 Abaqus 式创建载荷流程"))
+            self._btn_loadbc_tool_load_manager.setToolTip(self._tr("loadbc.strip.load_manager.tip", "打开独立载荷管理器：编辑、复制、重命名、删除、抑制、定位"))
+            self._btn_loadbc_tool_create_bc.setToolTip(self._tr("loadbc.strip.create_bc.tip", "打开二维边界条件创建流程"))
+            self._btn_loadbc_tool_bc_manager.setToolTip(self._tr("loadbc.strip.bc_manager.tip", "打开独立边界条件管理器：编辑、复制、重命名、删除、抑制、定位"))
+            self._btn_loadbc_tool_pick_point.setToolTip(self._tr("loadbc.strip.pick_point.tip", "在画布上选择几何点或创建保留点"))
+            self._btn_loadbc_tool_pick_edge.setToolTip(self._tr("loadbc.strip.pick_edge.tip", "在画布上选择几何边，用于边载荷或边约束"))
+            self._btn_loadbc_tool_finish.setToolTip(self._tr("loadbc.strip.finish.tip", "完成当前 Load/BC 几何选择"))
+            self._btn_loadbc_tool_cancel.setToolTip(self._tr("loadbc.strip.cancel.tip", "取消当前交互命令"))
             self._btn_material_apply_template.setToolTip(self._tr("material.strip.template", "将模板参数写入当前材料表单"))
             self._material_action_template_label.setText(self._tr("rock.material.action.template", "材料工具"))
             self._material_action_template_combo.setToolTip(self._tr("material.strip.template_combo", "常见岩土材料模板"))
@@ -11711,6 +12429,11 @@ class MainWindow(QMainWindow):
             self._btn_load_bc_clear_point_set.setText(self._tr("rock.loadbc.set.clear_point_set", "清空点集"))
             self._btn_load_bc_finish_pick.setText(self._tr("rock.loadbc.set.finish_pick", "完成拾取"))
             self._btn_load_bc_cleanup_points.setText(self._tr("rock.loadbc.set.cleanup_points", "清理辅助点"))
+            self._load_bc_manager_launch_group.setTitle(self._tr("rock.loadbc.manager.launch", "Abaqus 式管理"))
+            self._btn_create_load_dialog.setText(self._tr("rock.loadbc.dialog.create_load", "创建载荷..."))
+            self._btn_open_load_manager_dialog.setText(self._tr("rock.loadbc.dialog.load_manager", "载荷管理器..."))
+            self._btn_create_bc_dialog.setText(self._tr("rock.loadbc.dialog.create_bc", "创建边界条件..."))
+            self._btn_open_bc_manager_dialog.setText(self._tr("rock.loadbc.dialog.bc_manager", "边界条件管理器..."))
             self._load_bc_tool_group.setTitle(self._tr("rock.loadbc.tools.group", "创建工具 / Create Load"))
             self._btn_tool_point_force.setText(self._tr("rock.loadbc.tools.point_force", "集中力"))
             self._btn_tool_edge_load.setText(self._tr("rock.loadbc.tools.edge_load", "边线载"))
