@@ -1,0 +1,61 @@
+Metadata-Version: 2.4
+Name: fem-ai-solver
+Version: 0.1.0
+Summary: 2D FEM solver with GUI and AI assistance
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.26
+Requires-Dist: scipy>=1.11
+Requires-Dist: pyside6>=6.7
+
+# FEM AI Solver
+
+一个面向 2D 有限元分析的工程软件原型项目，目标是逐步演进为具备以下能力的桌面应用：
+
+- 基础 FEM 建模、装配、求解与后处理
+- PySide6 图形界面
+- Python + C++ 混合高性能计算内核
+- AI 辅助题目解析、建模建议与结果解释
+
+## 当前工程目标
+
+当前版本优先解决三个问题：
+
+1. 把工程骨架搭对，避免后期重构成本过高
+2. 统一 FEM 数据模型，支撑多单元类型扩展
+3. 为 C++ 求解核心与 Python GUI/AI 之间建立稳定接口
+
+## 建议开发顺序
+
+1. `T3 + 平面应力/平面应变 + 线弹性 + 静力学`
+2. `Q4`
+3. `T6`
+4. 稀疏组装与求解器升级
+5. GUI 交互建模与后处理
+6. AI 辅助模块接入
+
+## 目录结构
+
+```text
+fem_ai_solver/
+├── core_cpp/                # C++ FEM 核心与 pybind11 绑定
+├── docs/                    # 架构文档与开发路线
+├── python/
+│   ├── fem_ai_solver/
+│   │   ├── fem/             # Python 侧领域模型与流程编排
+│   │   ├── ui/              # GUI
+│   │   ├── ai/              # AI 模块
+│   │   └── app.py           # 桌面应用入口
+├── tests/                   # 单元测试/集成测试
+├── CMakeLists.txt
+└── pyproject.toml
+```
+
+## 近期里程碑
+
+- M1: 单元级验证
+- M2: 整体模型求解跑通
+- M3: GUI 可视化
+- M4: AI 辅助建模与解释
+
+详见 [docs/architecture.md](I:\wm\fem_2\docs\architecture.md) 和 [docs/roadmap.md](I:\wm\fem_2\docs\roadmap.md)。

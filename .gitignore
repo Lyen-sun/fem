@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.pytest_cache_local/
+build/
+build_nmake/
+output/
+tests/.tmp_runtime/
